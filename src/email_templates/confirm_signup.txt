@@ -1,0 +1,6 @@
+Subject: TVsuggest - Confirm Sign Up
+
+Hallo,
+
+to complete your registration visit:
+{confirmUrl}

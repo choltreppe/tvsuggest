@@ -1,0 +1,398 @@
+
+$color-primary: #83ddd2
+$color-primary-light: #aee6de
+$color-on-primary: black
+
+$color-bg: #1b1e2a
+$color-bg-light: #303342
+$color-bg-lighter: #585d6f
+$color-fg: white
+$color-fg-dim: #a1a7b3
+
+$color-error: #964f58
+$color-info: #b1ceac
+
+$border-radius-box: 20px
+$border-radius-elem: 10px
+
+$font-size: 18px
+
+$footer-height: 60px
+
+
+body 
+  position: relative
+  display: flex
+  flex-direction: column
+  align-items: center
+  min-height: 100vh
+  margin: 0
+  padding-bottom: $footer-height
+  box-sizing: border-box
+  background-color: $color-bg
+  color: $color-fg
+  font-family: Verdana, sans serif
+  font-size: $font-size
+
+.hidden 
+  display: none !important
+
+a 
+  color: $color-fg-dim
+
+input 
+  font-size: $font-size
+
+  &[type="text"], &[type="password"], &[type="email"] 
+    padding: 9px 12px
+    border: none
+    border-radius: $border-radius-elem
+    background-color: $color-bg-lighter
+    color: $color-fg
+    &:focus 
+      outline: $color-fg-dim 1px solid
+
+  &::placeholder 
+    color: $color-fg-dim
+
+button, input[type="submit"], .button 
+  padding: 6px 10px
+  border: none
+  border-radius: $border-radius-elem
+  background-color: $color-bg-lighter
+  color: $color-fg
+  text-decoration: none
+  
+  &:focus 
+    outline: $color-fg-dim 2px solid
+
+  &:hover 
+    cursor: pointer
+
+  &.primary 
+    background-color: $color-primary
+    color: $color-on-primary
+    font-weight: bold
+    &:hover 
+      background-color: $color-primary-light
+
+.loading 
+  width: 20px
+  height: 20px
+  border-radius: 100%
+  border: $color-fg 6px solid
+  margin: 5px
+  rotate: 45deg
+  animation: loading 1s infinite linear
+
+@keyframes loading
+
+  @mixin border-colors($visible-side)
+    @each $side in [top, right, bottom, left]
+      @if $side == $visible-side
+         border-#{$side}-color: rgba(255, 255, 255, 1)
+      @else
+         border-#{$side}-color: rgba(255, 255, 255, 0)
+  0%
+    @include border-colors(top)
+  25%
+    @include border-colors(right)
+  50%
+    @include border-colors(bottom)
+  75%
+    @include border-colors(left)
+  100%
+    @include border-colors(top)
+
+.box 
+  padding: 16px
+  border-radius: $border-radius-box
+  background-color: $color-bg-light
+  box-shadow: 6px 16px 32px 0 rgba(0, 0, 0, 0.6)
+
+#form-page
+  @extend .box
+  width: 320px
+  max-width: 75vw
+  display: flex
+  flex-direction: column
+  align-items: stretch
+  margin-top: 26vh
+  gap: 14px
+
+  > .msg-box 
+    margin-bottom: 20px
+
+  > .buttons 
+    display: flex
+    flex-direction: row
+    justify-content: flex-end
+    margin-top: 6px
+    gap: 10px
+
+    > .loading 
+      width: 12px
+      height: 12px
+      border-width: 4px
+      margin-right: auto
+
+.msg-box 
+  padding: 12px
+  border-radius: $border-radius-elem
+  color: black
+
+  &.error 
+    background-color: $color-error
+
+  &.info 
+    background-color: $color-info
+
+#forgot-password 
+  align-self: flex-end
+  font-size: 13px
+  margin-top: 13px
+  margin-right: 4px
+
+.rating > div 
+  border-radius: 100%
+  background: center no-repeat
+  background-size: contain
+
+  @each $rating in [bad, neutral, good, better]
+    &.#{$rating}
+      background-image:url(/static/img/rating/#{$rating}.svg)
+
+  &:hover
+    cursor: pointer
+
+  &.selected 
+    background-color: black !important
+    filter: invert(1)
+
+#head-bar 
+  position: fixed
+  @each $side in [top, left, right]
+    #{$side}: 0
+  display: flex
+  flex-direction: column
+  align-items: center
+  background-color: $color-bg
+  box-shadow: 0 30px 30px $color-bg
+  z-index: 2
+
+  > .box 
+    display: flex
+    flex-direction: row
+    align-items: center
+    border-top-left-radius: 0
+    border-top-right-radius: 0
+    gap: 36px
+
+  .suggestions 
+    font-weight: bold
+    padding: 8px 12px
+    margin-right: -12px
+    border-radius: $border-radius-elem
+    &.selected 
+      background-color: white
+      color: black
+    &:hover 
+      cursor: pointer
+
+  .rating 
+    display: flex
+    flex-direction: row
+    align-items: center
+    > div 
+      width: 36px
+      height: 36px
+
+  .search 
+    display: flex
+    flex-direction: row
+    align-items: stretch
+
+    > input[type="text"] 
+      width: 260px
+      padding-right: 20px
+
+    > input[type="submit"] 
+      width: 48px
+      margin-left: -15px
+      background: $color-bg-lighter url(/static/img/loupe.svg) center no-repeat
+      background-size: contain
+      &.selected 
+        background-color: black
+        filter: invert(1)
+
+#logout 
+  position: fixed
+  @each $side in [top, right]
+    #{$side}: 16px
+  @each $dim in [width, height]
+    #{$dim}: 46px
+  padding: 0
+  background: url(/static/img/logout.svg) center no-repeat
+  background-size: contain
+  border-radius: 100%
+  z-index: 2
+  &:hover 
+    background-color: $color-bg-light
+
+body > .loading 
+  position: absolute
+  top: 300px
+  left: 50%
+  translate: -50% 0
+
+#content 
+  width: calc(100% - 80px)
+  min-height: 200px
+  margin-top: 160px
+  margin-bottom: 80px
+  background-color: $color-bg
+  display: flex
+  flex-direction: row
+  flex-wrap: wrap
+  justify-content: center
+  gap: 40px
+
+.tv-title
+  @extend .box
+  position: relative
+  width: 280px
+  height: 420px
+  padding: 0
+  background: center no-repeat
+  background-size: cover
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  overflow: hidden
+
+  > .name 
+    position: relative
+    margin: 0 20px
+    font-weight: bold
+    font-size: 30px
+    text-align: center
+
+  > .year 
+    position: relative
+    font-size: 22px
+    margin-top: 12px
+    margin-bottom: 24px
+
+  > .kind
+    position: absolute
+    @each $side in [left, top]
+      #{$side}: 20px
+    font-size: 18px
+    color: $color-fg-dim
+
+  > .rating 
+    position: absolute
+    @each $side in [left, right, bottom]
+      #{$side}: 0
+    height: 0
+    overflow: hidden
+    display: flex
+    flex-direction: row
+    align-items: flex-start
+    justify-content: center
+    gap: 20px
+    background-color: $color-bg-light
+    transition: all 0.2s
+
+    > div
+      @each $dim in [width, height]
+        #{$dim}: 40px
+      margin-top: 20px
+      background-color: $color-bg-lighter
+      transition: all 0.2s
+      box-shadow: 0 0 0 rgba(0, 0, 0, 0.8)
+
+      &:not(.selected):hover 
+        translate: 0 -5px
+        box-shadow: 2px 5px 8px rgba(0, 0, 0, 0.3)
+
+  transition: all 0.3s
+  &:hover 
+    transform: scale(1.2)
+    z-index: 1
+    > .rating 
+      height: 80px
+
+@each $dir, $offset in ("in": 100vw, "out": 0vw)
+  #content.#{$dir}
+    animation: content-#{$dir} forwards 0.4s
+  @keyframes content-#{$dir}
+    from
+      translate: #{$offset} 0
+    to
+      translate: #{$offset - 100vw} 0
+
+#msg-page 
+  display: flex
+  flex-direction: column
+  align-items: flex-start
+  padding: 28px
+  margin-top: 20vh
+
+  > h1 
+    margin-top: 0
+
+  > .button 
+    align-self: flex-end
+    margin-top: 40px
+
+#footer 
+  position: absolute
+  @each $side in [left, right, bottom]
+    #{$side}: 0
+  height: $footer-height
+  background-color: $color-bg-light
+  display: flex
+  flex-direction: row
+  align-items: center
+  justify-content: center
+
+  > a 
+    color: $color-fg-dim
+    font-size: 13px
+    text-decoration: none
+    margin: 0 20px
+
+
+@media (max-width: 900px) 
+  #head-bar > .box 
+    align-self: flex-start
+    border-bottom-left-radius: 0
+    > .search > input[type="text"] 
+      width: 186px
+
+@media (max-width: 750px) 
+
+  #head-bar > .box 
+    align-self: flex-start
+    border-bottom-left-radius: 0
+    display: grid
+    grid-template-areas: "suggestions rating" "search search"
+
+    > .suggestions
+      grid-area: suggestions
+
+    > .rating
+      grid-area: rating
+
+    > .search 
+      grid-area: search
+      width: 100%
+      > input[type="text"] 
+        width: auto
+        min-width: 0
+        flex: 1 1
+
+  #content 
+    margin-top: 240px

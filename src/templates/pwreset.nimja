@@ -1,0 +1,9 @@
+{% extends templates/_form_page.nimja %}
+
+{% block defs %}
+  {% const fields = ["password"] %}
+{% endblock %}
+
+{% block buttons %}
+  <input type="submit" class="primary" value="Reset Password">
+{% endblock %}

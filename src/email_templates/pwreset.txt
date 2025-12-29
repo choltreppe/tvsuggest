@@ -1,0 +1,6 @@
+Subject: TVsuggest - Password Reset
+
+Hallo,
+
+to reset your password visit:
+{resetUrl}

@@ -1,0 +1,15 @@
+<div class="tv-title" style="background-image:url({{ title.img }})">
+  {% if title.img == "" %}
+    <div class="type">{{ title.kind }}</div>
+    <div class="name">{{ title.name }}</div>
+    <div class="year">{{ title.startYear }}</div>
+  {% endif %}
+  <div class="rating">
+    {% for (name, n) in ratingOptions %}
+      <div
+        class="{{ name }} {% if some(n) == rating %} selected {% endif %}"
+        onclick="rateTitle(this, '{{ title.id }}', {{ n }})"
+      ></div>
+    {% endfor %}
+  </div>
+</div>

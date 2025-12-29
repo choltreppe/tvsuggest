@@ -1,0 +1,61 @@
+{% extends templates/_base.nimja %}
+
+{% block body %}
+
+  {% var homeOnSuccess = false %}
+  {% block defs %} {% endblock %}
+
+  <form id="form-page" onsubmit="post({{ homeOnSuccess }})">
+    <div class="msg-box hidden"></div>
+    {% for field in fields %}
+      <input type="{{ field }}" name="{{ field }}" placeholder="{{ field.capitalizeAscii() }}">
+    {% endfor %}
+    <div class="buttons">
+      <div class="loading hidden"></div>
+      {% block buttons %} {% endblock %}
+    </div>
+    {% block extra %} {% endblock %}
+  </form>
+
+  <script type="text/javascript">
+
+    const form = document.getElementById("form-page")
+    const msgBox = form.querySelector(".msg-box")
+      
+    function formShowMsg(type, msg) {
+      msgBox.innerHTML = msg
+      msgBox.className = "msg-box " + type
+    }
+
+    function post(homeOnSuccess) {
+      event.preventDefault()
+
+      let loading = form.querySelector(".loading")
+      loading.classList.remove("hidden")
+
+      fetch(window.location.href, {
+        method: "POST",
+        body: new FormData(form)
+      })
+      .then(resp => {
+        loading.classList.add("hidden")
+        switch (resp.status) {
+        case 200:
+          if (homeOnSuccess)
+            window.location.href = "/"
+          else
+            resp.text().then(resp => formShowMsg("info", resp))
+          break
+        case 400:
+          resp.text().then(resp => formShowMsg("error", resp))
+          break
+        case 500: case 502:
+          formShowMsg("error", "Sorry something went wrong. Please try again later.")
+          break
+        }
+      })
+    }
+
+  </script>
+
+{% endblock %}

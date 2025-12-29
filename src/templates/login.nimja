@@ -1,0 +1,15 @@
+{% extends templates/_form_page.nimja %}
+
+{% block defs %}
+  {% homeOnSuccess = true %}
+  {% const fields = ["email", "password"] %}
+{% endblock %}
+
+{% block buttons %}
+  <a class="button" href="/signup">Sign Up</a>
+  <input type="submit" class="primary" value="Login">
+{% endblock %}
+
+{% block extra %}
+  <a id="forgot-password" href="/pwreset/request">forgot password?</a>
+{% endblock %}

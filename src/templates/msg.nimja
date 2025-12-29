@@ -1,0 +1,9 @@
+<head>
+  <link rel="stylesheet" type="text/css" href="/static/style.css">
+</head>
+
+<div id="msg-page" class="box">
+  <h1>{{ title }}</h1>
+  <span>{{ msg }}</span>
+  <a class="button" href="/">Back Home</a>
+</div>
