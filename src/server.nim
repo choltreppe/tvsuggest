@@ -1,55 +1,45 @@
 {.experimental: "strictDefs".}
-import std/[strformat, strutils, envvars, sysrand, osproc, streams, httpclient, base64, uri, importutils, macros]
+import std/[strformat, strutils, tables, json, envvars, sysrand, osproc, streams, httpclient, base64, times]
 import fusion/matching
 import checksums/sha3
-import db_connector/db_mysql
-import prologue, prologue/middlewares/[staticfile, sessions/memorysession]
-import nimja, jsony
+import nimja, jsony, jwt, webby
+import waterpark/postgres
+import mummy, mummy/routers
 
 setCurrentDir getAppDir()
 
 const
-  port = Port 8090
+  port = 8090
+  host =
+    when defined(release): "0.0.0.0"
+    else: "127.0.0.1"
   publicHost =
     when defined(release): "https://tvsuggest.chol.foo"
     else: &"localhost:{port}"
   senderEmailAddress = "TV Suggest <noreply@tvsuggest.chol.foo>"
 
-let db = open("localhost", getEnv"MYSQL_USER", getEnv"MYSQL_PASSWORD", getEnv"MYSQL_DATABASE")
+  jwtTokenName = "session"
 
-let settings = newSettings(
-  debug = not defined(release),
-  port = port,
-  address =
-    when defined(release): "0.0.0.0"
-    else: "127.0.0.1"
-)
-var app = newApp(settings)
+let secret = getEnv"SECRET"
 
-app.use(staticFileMiddleware("static"))
-app.use(sessionMiddleware(settings))
 
+let db = newPostgresPool(4, "localhost", getEnv"DB_USER", getEnv"DB_PASS", getEnv"DB_NAME")
+var router: Router
+  
 
 proc randomCode: string = base64.encode(urandom(24))
 
-template respTemplate(name: static string, status = Http200): untyped =
-  resp tmplf("templates/"&name&".nimja", baseDir = getScriptDir()), status
+template respondTemplate(request: Request, name: static string) =
+  request.respond(200, @{"Content-Type": "text/html; charset=utf-8"},
+    tmplf("templates/"&name&".nimja", baseDir=getScriptDir()))
 
-template serveStaticTemplate(name: static string): untyped =
-  app.get("/"&name.replace("_", "/")) do(ctx {.inject.}: Context) {.async.}:
-    respTemplate(name)
+template serveTemplate(name: static string) =
+  router.get("/"&name) do(request: Request):
+    request.respondTemplate(name)
 
-macro withUser(node: untyped): untyped =
-  result = node
-  let body = node[^1]
-  let email = ident"email"
-  result[^1] = quote do: 
-    privateAccess Session
-    if ctx.session.data.hasKey("user_email"):
-      let `email` = ctx.session["user_email"]
-      `body`
-    else:
-      resp redirect("/login")
+proc respondMsgPage(request: Request, title, msg: string) =
+  request.respondTemplate("msg")
+
 
 proc sendMail(to: string, body: string) =
   # `body` is expected to contain missing headers (like subject) and body
@@ -68,112 +58,160 @@ template sendMailTmpl(to: string, tmpl: static string) =
   sendMail(to, &static(staticRead("email_templates/"&tmpl)))
 
 
-app.registerErrorHandler(Http404) do(ctx: Context) {.async.}:
-  const title = "404 Page not found"
-  const msg = ""
-  respTemplate "msg", Http404
+proc setJwtTokenCookie(email: string): string =
+  var token = toJWT(%*{
+    "header": {
+      "alg": "HS256",
+      "typ": "JWT"
+    },
+    "claims": {
+      "email": email,
+      "exp": (getTime() + 14.days).toUnix()
+    }
+  })
+  {.gcsafe.}:
+    token.sign(secret)
+  &"{jwtTokenName}={token}; Path=/; HttpOnly; Secure; SameSite=Strict"
 
-app.registerErrorHandler(Http500) do(ctx: Context) {.async.}:
-  const title = "500 Internal Server Error"
-  const msg = "There was an unexpected server error."
-  respTemplate "msg", Http500
+proc getEmailFormJwt(cookies: string): string =
+  let cookies = cookies.split(";")
+  for cookie in cookies:
+    let cookie = cookie.strip
+    if cookie.startsWith(jwtTokenName&"="):
+      try:
+        let token = cookie[len(jwtTokenName)+1 .. ^1].toJwt
+        {.gcsafe.}:
+          if token.verify(secret, HS256):
+            return $token.claims["email"].node.str
+      except: discard
+  ""
+
+template withUser =
+  mixin request
+  if "cookie" notin request.headers:
+    request.respond(302, @{"Location": "/login"})
+    return
+  let email {.inject.} = getEmailFormJwt(request.headers["cookie"])
+  if email == "":
+    request.respond(302, @{
+      "Location": "/login",
+      "Set-Cookie": &"{jwtTokenName}=; Path=/; expires=Thu, Jan 01 1970 00:00:00 UTC"
+    })
+    return
+
+proc postParams(request: Request): QueryParams {.inline.} =
+  parseSearch(request.body)
+
+template withCredentials =
+  mixin request
+  let params = request.postParams
+  let email {.inject.} = params["email"]
+  let password {.inject.} = params["password"]
 
 
-serveStaticTemplate "login"
+router.get("/") do(request: Request):
+  withUser
+  request.respondTemplate("home")
 
-app.post("/login") do(ctx: Context) {.async.}:
-  let email = ctx.getFormParams("email")
-  let pw = ctx.getFormParams("password")
-  let pwHash = db.getValue(
-    sql"""
-      SELECT pw_hash
-      FROM users
-      WHERE email = ? AND is_confirmed
-    """,
-    email
-  )
-  if pwHash == "":
-    resp "No user found with this email address.", Http400
-  elif $secureHash(Sha3_256, pw) != pwHash:
-    resp "Wrong password.", Http400
-  else:
-    ctx.session["user_email"] = email
-    resp ""
-
-serveStaticTemplate "signup"
-
-app.post("/signup") do(ctx: Context) {.async.}:
-  let email = ctx.getFormParams("email")
-  let pw = ctx.getFormParams("password")
-
-  [@code, @confirmed] := db.getRow(sql"SELECT confirm_code, is_confirmed FROM users WHERE email = ?", email)
-
-  if confirmed == "1":
-    resp "A user with this email is already registered.", Http400
-
-  else:
-    if code == "":
-      code = randomCode()
-      db.exec(sql"""
-        INSERT INTO users(email, pw_hash, confirm_code)
-        VALUES(?, ?, ?)
+serveTemplate("login")
+router.post("/login") do(request: Request):
+  withCredentials
+  
+  var pwHash = ""
+  db.withConnection conn:
+    pwHash = conn.getValue(
+      sql"""
+        SELECT pw_hash
+        FROM users
+        WHERE email = ? AND is_confirmed
       """,
-        email, $secureHash(Sha3_256, pw), code
-      )
-    let confirmUrl = &"{publicHost}/signup/confirm/{encodeUrl(email)}/{encodeUrl(code)}"
-    sendMailTmpl(email, "confirm_signup.txt")
-    resp "Registration sent. You should recieve an email with a confirmation link."
+      email
+    )
 
-app.get("/signup/confirm/{email}/{code}") do(ctx: Context) {.async.}:
-  let email = ctx.getPathParams("email")
-  let code = ctx.getPathParams("code")
-  let correctCode = db.getValue(sql"SELECT confirm_code FROM users WHERE email = ?", email)
-  let (title, msg) = 
-    if correctCode == "":
-      ("Error", "There is no user with this email address.")
-    elif code != correctCode:
-      ("Wrong Code", "The confirmation code is incorrect.")
+  if pwHash == "":
+    request.respond(400, body="No user found with this email address.")
+  elif $secureHash(Sha3_256, password) != pwHash:
+    request.respond(400, body="Wrong password.")
+  else:
+    request.respond(200, @{"Set-Cookie": setJwtTokenCookie(email)})
+
+serveTemplate("signup")
+router.post("/signup") do(request: Request):
+  withCredentials
+
+  db.withConnection conn:
+
+    [@code, @confirmed] := conn.getRow(
+      sql"SELECT confirm_code, is_confirmed FROM users WHERE email = ?", email)
+
+    if confirmed == "1":
+      request.respond(400, body="A user with this email is already registered.")
+
     else:
-      ("Registration Completed", "You are now registered and can log in.")
+      if code == "":
+        code = randomCode()
+        conn.exec(sql"""
+          INSERT INTO users(email, pw_hash, confirm_code)
+          VALUES(?, ?, ?)
+        """,
+          email, $secureHash(Sha3_256, password), code
+        )
+      let confirmUrl = &"{publicHost}/signup/confirm/{encode(email)}/{encode(code)}"
+      sendMailTmpl(email, "confirm_signup.txt")
+      request.respond(200, body="Registration sent. You should recieve an email with a confirmation link.")
 
-  db.exec(sql"UPDATE users SET is_confirmed = true WHERE email = ?", email)
-  respTemplate "msg"
+router.get("/signup/confirm/@email/@code") do(request: Request):
+  let email = request.pathParams["email"].decode
+  let code = request.pathParams["code"].decode
 
-serveStaticTemplate "pwreset_request"
+  db.withConnection conn:
 
-app.post("/pwreset/request") do(ctx: Context) {.async.}:
-  let email = ctx.getFormParams("email")
-  if db.getValue(sql"SELECT is_confirmed FROM users WHERE email = ?", email) != "1":
-    resp "There is no user with this email address.", Http400
-  else:
-    let code = randomCode()
-    db.exec(sql"UPDATE users SET confirm_code = ? WHERE email = ?", code, email)
-    let resetUrl = &"{publicHost}/pwreset/{encodeUrl(email)}/{encodeUrl(code)}"
-    sendMailTmpl(email, "pwreset.txt")
-    resp "Reset link sent. You should recieve an email with a link to reset your password."
+    let correctCode = conn.getValue(sql"SELECT confirm_code FROM users WHERE email = ?", email)
+    let (title, msg) = 
+      if correctCode == "":
+        ("Error", "There is no user with this email address.")
+      elif code != correctCode:
+        ("Wrong Code", "The confirmation code is incorrect.")
+      else:
+        ("Registration Completed", "You are now registered and can log in.")
 
-app.get("/pwreset/{email}/{code}") do(ctx: Context) {.async.}:
-  echo "reset pw"
-  let email = ctx.getPathParams("email")
-  let code = ctx.getPathParams("code")
-  respTemplate "pwreset"
+    conn.exec(sql"UPDATE users SET is_confirmed = true WHERE email = ?", email)
+    request.respondTemplate("msg")
 
-app.post("/pwreset/{email}/{code}") do(ctx: Context) {.async.}:
-  let email = ctx.getPathParams("email")
-  let code = ctx.getPathParams("code")
-  let pw = ctx.getFormParams("password")
-  [@correctCode, @confirmed] := db.getRow(sql"SELECT confirm_code, is_confirmed FROM users WHERE email = ?", email)
-  if confirmed != "1":
-    resp "A user with this email is already registered.", Http400
-  elif code != correctCode:
-    resp "The confirmation code is incorrect.", Http400
-  else:
-    db.exec(sql"UPDATE users SET pw_hash = ? WHERE email = ?", $secureHash(Sha3_256, pw), email)
-    resp "New password set successfully."
+serveTemplate("pwreset_request")
+router.post("/pwreset/request") do(request: Request):
+  let email = request.postParams["email"]
+  db.withConnection conn:
+    if conn.getValue(sql"SELECT is_confirmed FROM users WHERE email = ?", email) != "1":
+      request.respond(400, body="There is no user with this email address.")
+    else:
+      let code = randomCode()
+      conn.exec(sql"UPDATE users SET confirm_code = ? WHERE email = ?", code, email)
+      let resetUrl = &"{publicHost}/pwreset/{encodeUrl(email)}/{encodeUrl(code)}"
+      sendMailTmpl(email, "pwreset.txt")
+      request.respond(200, body="Reset link sent. You should recieve an email with a link to reset your password.")
 
+router.get("/pwreset/@email/@code") do(request: Request):
+  let email = request.pathParams["email"]
+  let code = request.pathParams["code"]
+  request.respondTemplate("pwreset")
 
-app.get("/") do(ctx: Context) {.withUser, async.}:
-  respTemplate "home"
+router.post("/pwreset/@email/@code") do(request: Request):
+  let email = request.pathParams["email"]
+  let code = request.pathParams["code"]
+  let pw = request.postParams["password"]
+  db.withConnection conn:
+    [@correctCode, @confirmed] := conn.getRow(
+      sql"SELECT confirm_code, is_confirmed FROM users WHERE email = ?",
+      email
+    )
+    if confirmed != "1":
+      request.respond(400, body="A user with this email is already registered.")
+    elif code != correctCode:
+      request.respond(400, body="The confirmation code is incorrect.")
+    else:
+      conn.exec(sql"UPDATE users SET pw_hash = ? WHERE email = ?", $secureHash(Sha3_256, pw), email)
+      request.respond(200, body="New password set successfully.")
 
 
 type Title = object
@@ -195,107 +233,130 @@ proc parseHook(s: string, i: var int, title: var Title) =
 const ratingOptions = {"bad": -1, "neutral": 0, "good": 1, "better": 2}
 
 const movieDbApiUrl = "https://api.imdbapi.dev"
-proc requestMovieDb(path: string): Future[tuple[code: HttpCode, body: string]] {.async.} =
-  var client = newAsyncHttpClient()
-  let resp = await client.get(movieDbApiUrl & path)
-  result = (resp.code, await resp.bodyStream.readAll())
+proc requestMovieDb(path: string): tuple[code: int, body: string] =
+  var client = newHttpClient()
+  let resp = client.get(movieDbApiUrl & path)
+  result = (resp.code.int, resp.bodyStream.readAll())
   close client
 
 type MovieDbError = ref object of CatchableError
-  code: HttpCode
+  code: int
 
 template exitWith(error: MovieDbError): untyped =
-  block:
-    let e = error
-    let msg: string
-    if e.code == Http429:
-      msg = "Sorry, there are too many requests. Please try again later."
-    else:
-      msg = "There was an unexpected server error."
-      stderr.writeLine(e.msg)
-    resp msg
-    return
+  mixin request
+  let e = error
+  let msg: string
+  if e.code == 429:
+    msg = "Sorry, there are too many requests. Please try again later."
+  else:
+    msg = "There was an unexpected server error."
+    stderr.writeLine(e.msg)
+  request.respond(200, body=msg)
+  return
 
-proc renderTitle(id: string, rating = none(int)): Future[string] {.async.} =
-  let (code, body) = await requestMovieDb("/titles/" & encodeUrl(id))
-  if code == Http200:
+proc renderTitle(id: string, rating = none(int)): string =
+  let (code, body) = requestMovieDb("/titles/" & encodeUrl(id))
+  if code == 200:
     let title = body.fromJson(Title)
     return tmplf("templates/title.nimja", baseDir = getScriptDir())
   else:
     raise MovieDbError(code: code, msg: body)
 
 proc getRating(email, titleId: string): Option[int] =
-  let s = db.getValue(sql"SELECT rating FROM user_ratings WHERE user_email = ? AND title_id = ?", email, titleId)
+  var s = ""
+  db.withConnection conn:
+    s = conn.getValue(
+      sql"SELECT rating FROM user_ratings WHERE user_email = ? AND title_id = ?",
+      email, titleId
+    )
   if s == "": none(int)
   else: some(parseInt(s))
 
-app.get("/my-ratings/{rating}") do(ctx: Context) {.withUser, async.}:
-  let rating = parseInt(ctx.getPathParams("rating"))
+router.get("/my-ratings/@rating") do(request: Request):
+  withUser
+  let rating = parseInt(request.pathParams["rating"])
   var body = ""
-  for row in db.rows(
-    sql"""
-      SELECT title_id FROM user_ratings
-      WHERE user_email = ? AND rating = ?
-    """,
-    email, rating
-  ):
-    try:
-      body &= await renderTitle(row[0], some(rating))
-    except MovieDbError as e:
-      exitWith e
-  resp body
+  var rows: seq[Row]
+  db.withConnection conn:
+    for row in conn.rows(
+      sql"""
+        SELECT title_id FROM user_ratings
+        WHERE user_email = ? AND rating = ?
+        ORDER BY updated_at DESC
+      """,
+      email, rating
+    ):
+      try:
+        body &= renderTitle(row[0], some(rating))
+      except MovieDbError as e:
+        exitWith e
+  request.respond(200, body=body)
 
-app.post("/rate/{titleId}/{rating}") do(ctx: Context) {.withUser, async.}:
-  let titleId = ctx.getPathParams("titleId")
-  let rating = ctx.getPathParams("rating")
-  if db.getValue(sql"SELECT 1 FROM user_ratings WHERE user_email = ? AND title_id = ?", email, titleId) == "1":
-    db.exec(sql"UPDATE user_ratings SET rating = ? WHERE user_email = ? AND title_id = ?", rating, email, titleId)
-  else:
-    db.exec(sql"INSERT INTO user_ratings(user_email, title_id, rating) VALUES(?, ?, ?)", email, titleId, rating)
+router.post("/rate/@titleId/@rating") do(request: Request):
+  withUser
+  let titleId = request.pathParams["titleId"]
+  let rating = request.pathParams["rating"]
+  db.withConnection conn:
+    if conn.getValue(sql"SELECT 1 FROM user_ratings WHERE user_email = ? AND title_id = ?", email, titleId) == "1":
+      conn.exec(sql"""
+        UPDATE user_ratings
+        SET rating = ?, updated_at = now()
+        WHERE user_email = ? AND title_id = ?
+      """, rating, email, titleId)
+    else:
+      conn.exec(sql"""
+        INSERT INTO user_ratings(user_email, title_id, rating)
+        VALUES(?, ?, ?)""", email, titleId, rating)
+  request.respond(200)
 
-app.get("/search/{title}") do(ctx: Context) {.withUser, async.}:
-  let title = ctx.getPathParams("title")
-  let (code, body) = await requestMovieDb("/search/titles?query=" & encodeUrl(title))
+router.get("/search/@title") do(request: Request):
+  withUser
+  let title = request.pathParams["title"]
+  let (code, body) = requestMovieDb("/search/titles?query=" & encodeUrl(title))
   case code
-  of Http200:
+  of 200:
     let titles = body.fromJson(tuple[titles: seq[Title]]).titles
     var respBody = ""
     for title in titles:
       let rating = getRating(email, title.id)
       respBody &= tmplf("templates/title.nimja", baseDir = getScriptDir())
-    resp respBody
+    request.respond(200, body=respBody)
   else:
     exitWith MovieDbError(code: code, msg: body)
 
-app.get("/suggestions") do(ctx: Context) {.withUser, async.}:
+router.get("/suggestions") do(request: Request):
+  withUser
   var body = ""
-  for row in db.rows(
-    sql"""
-      WITH own_ratings AS (
-        SELECT title_id, rating
-        FROM user_ratings
-        WHERE user_email = ? AND rating > 0
-      ),
-      subj_ratings AS (
-        SELECT user_ratings.title_id, (own_ratings.rating * sum(user_ratings.rating)) AS rating
-        FROM user_ratings
-        INNER JOIN own_ratings
-        WHERE user_ratings.title_id NOT IN (SELECT title_id FROM own_ratings)
-        GROUP BY user_ratings.title_id
-      )
-      SELECT title_id
-      FROM subj_ratings
-      WHERE rating > 0
-      ORDER BY rating
-      LIMIT 40
-    """,
-    email
-  ):
-    try:
-      body &= await renderTitle(row[0])
-    except MovieDbError as e:
-      exitWith e
-  resp body
+  db.withConnection conn:
+    for row in conn.rows(
+      sql"""
+        WITH own_ratings AS (
+          SELECT title_id, rating
+          FROM user_ratings
+          WHERE user_email = ? AND rating > 0
+        ),
+        subj_ratings AS (
+          SELECT user_ratings.title_id, (own_ratings.rating * sum(user_ratings.rating)) AS rating
+          FROM user_ratings
+          INNER JOIN own_ratings
+          WHERE user_ratings.title_id NOT IN (SELECT title_id FROM own_ratings)
+          GROUP BY user_ratings.title_id
+        )
+        SELECT title_id
+        FROM subj_ratings
+        WHERE rating > 0
+        ORDER BY rating
+        LIMIT 40
+      """,
+      email
+    ):
+      try:
+        body &= renderTitle(row[0])
+      except MovieDbError as e:
+        exitWith e
+  request.respond(200, body=body)
 
 
-run app
+let server = newServer(router)
+echo "Serving on " & host & ":" & $port
+server.serve(Port(port), host)

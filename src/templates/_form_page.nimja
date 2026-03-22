@@ -35,7 +35,7 @@
 
       fetch(window.location.href, {
         method: "POST",
-        body: new FormData(form)
+        body: new URLSearchParams(new FormData(form)),
       })
       .then(resp => {
         loading.classList.add("hidden")

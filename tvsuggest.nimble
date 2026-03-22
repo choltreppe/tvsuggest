@@ -11,11 +11,12 @@ requires "nim >= 2.2.6"
 requires "fusion"
 requires "nimja >= 0.10.0"
 requires "unroll"
-requires "prologue"
-requires "redis"
-requires "db_connector"
+requires "webby"
+requires "mummy"
+requires "waterpark"
 requires "checksums"
 requires "jsony"
+requires "jwt"
 
 
 before build:
