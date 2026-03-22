@@ -15,7 +15,7 @@ const
     else: "127.0.0.1"
   publicHost =
     when defined(release): "https://tvsuggest.chol.foo"
-    else: &"localhost:{port}"
+    else: &"localhost"
   senderEmailAddress = "TV Suggest <noreply@tvsuggest.chol.foo>"
 
   jwtTokenName = "session"
@@ -272,9 +272,19 @@ proc getRating(email, titleId: string): Option[int] =
   if s == "": none(int)
   else: some(parseInt(s))
 
+proc renderNoResults(text: string): string =
+  &"<div class=\"no-results\">{text}</div>"
+
 router.get("/my-ratings/@rating") do(request: Request):
   withUser
   let rating = parseInt(request.pathParams["rating"])
+  var ratingText = ""
+  for (text, r) in ratingOptions:
+    if r == rating:
+      ratingText = text
+      break
+  if ratingText == "":
+    request.respond(400, body="illigal rating (should be -1 .. 2)")
   var body = ""
   var rows: seq[Row]
   db.withConnection conn:
@@ -290,6 +300,8 @@ router.get("/my-ratings/@rating") do(request: Request):
         body &= renderTitle(row[0], some(rating))
       except MovieDbError as e:
         exitWith e
+  if body == "":
+    body = renderNoResults(&"You havn't rated any title as '{ratingText}' yet")
   request.respond(200, body=body)
 
 router.post("/rate/@titleId/@rating") do(request: Request):
@@ -330,18 +342,25 @@ router.get("/suggestions") do(request: Request):
   db.withConnection conn:
     for row in conn.rows(
       sql"""
-        WITH own_ratings AS (
-          SELECT title_id, rating
-          FROM user_ratings
-          WHERE user_email = ? AND rating > 0
-        ),
-        subj_ratings AS (
-          SELECT user_ratings.title_id, (own_ratings.rating * sum(user_ratings.rating)) AS rating
-          FROM user_ratings
-          INNER JOIN own_ratings
-          WHERE user_ratings.title_id NOT IN (SELECT title_id FROM own_ratings)
-          GROUP BY user_ratings.title_id
-        )
+        WITH
+          own_ratings AS (
+            SELECT title_id, rating
+            FROM user_ratings
+            WHERE user_email = ? AND rating > 0
+          ),
+          user_agreement AS (
+            SELECT user_ratings.user_email, sum(user_ratings.rating * own_ratings.rating) AS agreement
+            FROM own_ratings, user_ratings
+            WHERE own_ratings.title_id = user_ratings.title_id
+            GROUP BY user_ratings.user_email
+          ),
+          subj_ratings AS (
+            SELECT user_ratings.title_id, sum(user_ratings.rating * agreement) AS rating
+            FROM user_ratings, user_agreement
+            WHERE user_ratings.title_id NOT IN (SELECT title_id FROM own_ratings)
+              AND user_ratings.user_email = user_agreement.user_email
+            GROUP BY user_ratings.title_id
+          )
         SELECT title_id
         FROM subj_ratings
         WHERE rating > 0
@@ -354,9 +373,12 @@ router.get("/suggestions") do(request: Request):
         body &= renderTitle(row[0])
       except MovieDbError as e:
         exitWith e
+
+  if body == "":
+    body = renderNoResults("Sorry, there are no overlaps with other users, to make suggestions based of, yet")
   request.respond(200, body=body)
 
 
 let server = newServer(router)
-echo "Serving on " & host & ":" & $port
+echo &"Serving on {host}:{port}"
 server.serve(Port(port), host)
