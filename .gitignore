@@ -2,3 +2,4 @@ out/server
 out/static/style.css
 .env
 nginx.conf
+tvsuggest.ini

@@ -19,7 +19,12 @@
   <button id="logout" onclick="logout()"></button>
   
   <div class="loading hidden"></div>
-  <div id="content"></div>
+  <div id="content">
+    <div class="no-results">
+      Start rating your favorite shows (using the search bar) <br>
+      to get your first suggestions
+    </div>
+  </div>
 
   <script type="text/javascript">
     

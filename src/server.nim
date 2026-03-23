@@ -9,7 +9,7 @@ import mummy, mummy/routers
 setCurrentDir getAppDir()
 
 const
-  port = 8090
+  port = 8091
   host =
     when defined(release): "0.0.0.0"
     else: "127.0.0.1"
@@ -23,7 +23,7 @@ const
 let secret = getEnv"SECRET"
 
 
-let db = newPostgresPool(4, "localhost", getEnv"DB_USER", getEnv"DB_PASS", getEnv"DB_NAME")
+let db = newPostgresPool(10, "localhost", getEnv"DB_USER", getEnv"DB_PASS", getEnv"DB_NAME")
 var router: Router
   
 
